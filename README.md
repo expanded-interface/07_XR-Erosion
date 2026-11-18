@@ -121,6 +121,27 @@ you are looking from its capture side. Walk toward it, then around it: the far
 side and the upper trunk were never photographed and are mostly residue. Turn
 around: N04 is to your right, Ginebra behind you, D05 to your left.
 
+## File size: SPZ
+
+The places are served as **SPZ** (Niantic's compressed Gaussian-splat format,
+read natively by Spark), about a quarter of the PLY size with no visible
+difference: positions are stored as fixed-point integers, and colour, opacity,
+scale and rotation as 8-bit values, then gzip-compressed.
+
+| Place | PLY | SPZ | Quest 2 PLY | Quest 2 SPZ |
+| --- | --- | --- | --- | --- |
+| D02 | 12.3 MB | 3.2 MB | 5.6 MB | 1.5 MB |
+| N04 | 6.4 MB | 1.7 MB | 3.4 MB | 0.9 MB |
+| Ginebra | 2.9 MB | 0.8 MB | 2.0 MB | 0.5 MB |
+| D05 | 0.6 MB | 0.2 MB | 0.6 MB | 0.2 MB |
+| **Total** | **22.2 MB** | **5.8 MB** | **11.5 MB** | **3.1 MB** |
+
+The PLY files are only the working source now; the app never downloads them.
+To convert a new PLY: `npm run dev`, then in the browser console of
+`https://localhost:5173/tools/transcode/` run
+`await convert('/public/scenes/MYID.ply')` (it returns the SPZ as base64), or
+use Spark's `transcodeSpz()` in your own script.
+
 ## Controls
 
 | Input | Action |

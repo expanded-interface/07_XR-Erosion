@@ -8,7 +8,7 @@
     {
       "id": "D02",
       "label": "D02 \u00b7 great trunk",
-      "splat": "./scenes/D02.ply",
+      "splat": "./scenes/D02.spz",
       "cams": "./scenes/D02.cameras.json",
       "anchor": {
         "center": [
@@ -27,12 +27,12 @@
         "mote": 0.008,
         "amp": 0.06
       },
-      "splatLite": "./scenes/q2/D02.ply"
+      "splatLite": "./scenes/q2/D02.spz"
     },
     {
       "id": "N04",
       "label": "N04 \u00b7 trunk with hollow",
-      "splat": "./scenes/N04.ply",
+      "splat": "./scenes/N04.spz",
       "cams": "./scenes/N04.cameras.json",
       "anchor": {
         "center": [
@@ -51,12 +51,12 @@
         "mote": 0.009,
         "amp": 0.07
       },
-      "splatLite": "./scenes/q2/N04.ply"
+      "splatLite": "./scenes/q2/N04.spz"
     },
     {
       "id": "Ginebra",
       "label": "Ginebra \u00b7 bench under trees",
-      "splat": "./scenes/Ginebra.ply",
+      "splat": "./scenes/Ginebra.spz",
       "cams": "./scenes/Ginebra.cameras.json",
       "anchor": {
         "center": [
@@ -75,12 +75,12 @@
         "mote": 0.014,
         "amp": 0.09
       },
-      "splatLite": "./scenes/q2/Ginebra.ply"
+      "splatLite": "./scenes/q2/Ginebra.spz"
     },
     {
       "id": "D05",
       "label": "D05 \u00b7 foliage",
-      "splat": "./scenes/D05.ply",
+      "splat": "./scenes/D05.spz",
       "cams": "./scenes/D05.cameras.json",
       "anchor": {
         "center": [
@@ -100,7 +100,7 @@
         "amp": 0.12,
         "residue": 0.4
       },
-      "splatLite": "./scenes/q2/D05.ply"
+      "splatLite": "./scenes/q2/D05.spz"
     }
   ],
   "extra": [

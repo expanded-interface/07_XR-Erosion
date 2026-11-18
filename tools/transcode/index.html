@@ -1,0 +1,11 @@
+<!doctype html><html><body><script type="module">
+import { transcodeSpz } from '@sparkjsdev/spark';
+window.convert = async (url) => {
+  const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  const { fileBytes, clippedCount } = await transcodeSpz({ inputs: [{ fileBytes: bytes, fileType: 'ply', pathOrUrl: url }], maxSh: 0 });
+  let s = ''; const b = new Uint8Array(fileBytes);
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return { b64: btoa(s), clippedCount, inBytes: bytes.length, outBytes: b.length };
+};
+window.ready = true;
+</script></body></html>
