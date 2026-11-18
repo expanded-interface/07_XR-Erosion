@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viewcone Erosion — Experiment 1</title>
+    <link rel="icon" href="data:," />
+    <script type="module" crossorigin src="./assets/index-DJZrp4Y7.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/preload-helper-PPVm8Dsz.js">
+    <link rel="modulepreload" crossorigin href="./assets/three.core-B-Pr_CDQ.js">
+    <link rel="modulepreload" crossorigin href="./assets/three.module-BMaigMmh.js">
+    <link rel="modulepreload" crossorigin href="./assets/BufferGeometryUtils-DuT1hZL_.js">
+    <link rel="modulepreload" crossorigin href="./assets/Pass-AfgOL6hz.js">
+    <link rel="modulepreload" crossorigin href="./assets/ModelLoader-09mCi1LK.js">
+    <link rel="modulepreload" crossorigin href="./assets/PanelMaterialFactory-D-FepdiY.js">
+    <link rel="modulepreload" crossorigin href="./assets/PanelMaterialFactory2-RvoP8QJe.js">
+    <link rel="modulepreload" crossorigin href="./assets/spark.module-Cqs4Hk3L.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-BnCXL8rv.css">
+  </head>
+  <body>
+    <aside id="panel">
+      <h1>Viewcone Erosion</h1>
+      <p class="lead">
+        Matter holds where the camera stood and erodes everywhere else.
+      </p>
+      <label>Scene
+        <select id="scene"></select>
+      </label>
+      <label>Splat <span>.ply · .spz · .splat</span>
+        <input id="splatFile" type="file" accept=".ply,.spz,.splat,.ksplat" />
+      </label>
+      <label>Capture cameras <span>cameras.json · images.txt</span>
+        <input id="camFiles" type="file" accept=".json,.txt" multiple />
+      </label>
+      <p id="status">Loading demo splat…</p>
+      <details>
+        <summary>Controls</summary>
+        <ul>
+          <li><b>Quest</b> · left stick: move · right stick ←→: snap turn · right stick ↑↓: up/down</li>
+          <li>A / X: show capture cameras · B / Y: erosion debug colours</li>
+          <li><b>Desktop simulator</b> · XR Blocks navigation · C: cameras · V: debug</li>
+        </ul>
+      </details>
+    </aside>
+  </body>
+</html>

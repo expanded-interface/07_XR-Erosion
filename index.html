@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viewcone Erosion — Experiment 1</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <aside id="panel">
+      <h1>Viewcone Erosion</h1>
+      <p class="lead">
+        Matter holds where the camera stood and erodes everywhere else.
+      </p>
+      <label>Scene
+        <select id="scene"></select>
+      </label>
+      <label>Splat <span>.ply · .spz · .splat</span>
+        <input id="splatFile" type="file" accept=".ply,.spz,.splat,.ksplat" />
+      </label>
+      <label>Capture cameras <span>cameras.json · images.txt</span>
+        <input id="camFiles" type="file" accept=".json,.txt" multiple />
+      </label>
+      <p id="status">Loading demo splat…</p>
+      <details>
+        <summary>Controls</summary>
+        <ul>
+          <li><b>Quest</b> · left stick: move · right stick ←→: snap turn · right stick ↑↓: up/down</li>
+          <li>A / X: show capture cameras · B / Y: erosion debug colours</li>
+          <li><b>Desktop simulator</b> · XR Blocks navigation · C: cameras · V: debug</li>
+        </ul>
+      </details>
+    </aside>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
