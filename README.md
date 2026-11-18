@@ -1,9 +1,12 @@
 # Viewcone Erosion — Experiment 1 (WebXR · Meta Quest 3)
 
-A Gaussian-splat capture stays photographic where the original camera stood and
-erodes into drifting motes wherever you view it from a place nobody
-photographed it from. Walking is the interaction: step off the capture path and
-the place forgets itself; step back and it re-forms.
+Four captured places share one dark space. Each stays photographic where its
+camera stood and erodes into drifting motes wherever you view it from a place
+nobody photographed it from. Walking is the interaction: step off a capture
+path and the place forgets itself; step back and it re-forms; keep walking and
+you reach the next one.
+
+![Shared space, top view](docs/layout.png)
 
 Built with **XR Blocks 0.24** (scene, XR session, desktop simulator), **Spark
 2.4** (Gaussian-splat rendering, per-splat GPU modifier) and **three.js r186**.
@@ -34,19 +37,33 @@ Alternatives to the LAN certificate:
 
 **On a desktop** the same URL opens the XR Blocks simulator (WASD + right-drag).
 
-## Scenes
+## The shared space
 
-Four captures from
+The four captures from
 [expanded-interface/PLY_Files](https://github.com/expanded-interface/PLY_Files)
-are bundled; pick one in the panel or with `?scene=`.
+stand on a ring (radius 11 m) around a central plaza, clockwise from straight
+ahead: D02, N04, Ginebra, D05. Each is turned so its photographed side, and its
+arc of capture viewpoints, faces the plaza. From the centre you see every place
+from where it was photographed; walk around behind one and it erodes.
 
-| Scene | Content | Points | Notes |
+- **Walk** (room scale or left stick) from one place to another. Entering a
+  place shows its name for a few seconds.
+- **Stops.** Trigger or pinch dissolves the whole space, moves you, and
+  re-forms it with you standing at the next stop, facing where you were
+  already looking: plaza → D02 → N04 → Ginebra → D05 → plaza.
+- A faint dust of points marks the floor everywhere, so the void has a ground.
+- Places closer than 16 m update their erosion every frame; farther ones every
+  6th frame, which keeps all four within Quest's budget (397k splats total).
+
+| Place | Content | Splats | Cut |
 | --- | --- | --- | --- |
-| `D02` (default) | Great trunk with moss and roots | 308k | Densest; best showcase |
-| `N04` | Trunk with a hollow, foliage around | 123k | |
-| `Ginebra` | Stone bench under trees | 61k | Sparser; larger motes |
-| `D05` | Foliage | 17k | Very sparse; reads as pointillist |
-| `demo` | Procedural test clearing | 150k | Synthetic |
+| `D02` | Great trunk with moss and roots | 220k | 5.5 m radius, subsampled from 308k |
+| `N04` | Trunk with a hollow, foliage around | 114k | 6 m radius |
+| `Ginebra` | Stone bench under trees | 52k | 6.5 m radius |
+| `D05` | Foliage | 11k | 6.5 m radius, centre set by hand |
+
+To change the arrangement, edit `layout.radius` and the order of `scenes` in
+`public/scenes/scenes.json`; `?ring=14` overrides the radius from the URL.
 
 The source files are plain coloured point clouds (x, y, z, RGB, Y up), with no
 splat attributes and no camera poses. `tools/prepare_scene.py` converts them:
@@ -63,39 +80,47 @@ splat attributes and no camera poses. `tools/prepare_scene.py` converts them:
   `images.txt` or `cameras.json`), load them instead: the piece is about where
   the photographer actually stood.
 
+- **Cut to a place.** Each cloud is cropped to a soft-edged cylinder around its
+  subject (opacity fades over the last 1.5 m), so the places do not spill into
+  each other. The script prints an `anchor` (subject centre on the ground, and
+  the middle viewpoint) that `scenes.json` uses to place it on the ring.
+
 ```bash
-python3 tools/prepare_scene.py path/to/cloud.ply public/scenes MYID \
-  [--arc 150] [--count 15] [--radius 3.5] [--azimuth 90]
+python3 tools/prepare_scene.py path/to/cloud.ply public/scenes MYID --keep 6 \
+  [--max-points 220000] [--center x,z] [--ground y] [--arc 150] [--count 15]
 ```
 
-Then add an entry to `public/scenes/scenes.json`.
+Then add an entry with its `anchor` to `public/scenes/scenes.json`.
 
 ## What you see first
 
-You start at the middle authored camera of `D02`, facing the trunk: the bark is
-photographic. Walk or stick-move around the trunk. The far side was never
-"photographed" and is mostly residue, and the upper trunk, outside every
-camera's view cone, is already eroding above you.
+You start in the plaza facing D02, 11 m away: its bark is photographic because
+you are looking from its capture side. Walk toward it, then around it: the far
+side and the upper trunk were never photographed and are mostly residue. Turn
+around: N04 is to your right, Ginebra behind you, D05 to your left.
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
 | Walk (room scale) | The primary interaction |
+| Desktop: WASD, right-drag | Walk / look (XR Blocks simulator) |
+| Right trigger / right-hand pinch | Next stop (dissolve, move, re-form) |
+| Left trigger / left-hand pinch | Previous stop |
 | Left stick | Move, head-relative |
 | Right stick ← → | Snap turn 30° |
 | Right stick ↑ ↓ | Move up / down |
 | A / X | Show capture cameras (orange lines: position + view direction) |
 | B / Y | Debug colours: blue = observed, amber = eroding |
+| Desktop: N / P or ← → | Next / previous stop |
 | Desktop: C / V | Same as A/X and B/Y |
 
 ## Use your own capture
 
-Two ways:
-
-- **Panel (before entering XR):** pick a `.ply` / `.spz` / `.splat` file and
-  your camera file(s).
-- **URL:** `?splat=<url>&cams=<url>` (files must be served with CORS).
+Add it to the space: run `tools/prepare_scene.py` (point clouds) or copy a
+trained splat and its cameras into `public/scenes/`, then add an entry with an
+`anchor` to `public/scenes/scenes.json`. Places are spread evenly around the
+ring in list order.
 
 Camera formats:
 
@@ -105,13 +130,9 @@ Camera formats:
 | COLMAP | `images.txt` (+ `cameras.txt` for field of view) | Convert binary models: `colmap model_converter --input_path sparse/0 --output_path sparse_txt --output_type TXT` |
 | Trainers that re-centre or rescale the scene (e.g. Nerfstudio) | COLMAP files plus that tool's transform | The splat and cameras must share one frame. Press A/X: the orange lines should sit where you stood. |
 
-With a real capture, you start at the middle capture camera, at 1.6 m eye
-height, at the capture's own scale. A splat with no cameras is shrunk to a
-1.2 m "memory diorama" in front of you, with a virtual 110° capture arc.
-
-**Splat budget on Quest 3:** about 300k–500k. The modifier regenerates every
-splat every frame, so this is below Spark's own ~1M guidance for static
-scenes. Reduce first: lower the trainer's splat cap, or use GSOPs Reduce in Houdini.
+**Splat budget on Quest 3:** about 400k–500k across all places. The modifier
+regenerates nearby places every frame, so this is below Spark's own ~1M
+guidance for static scenes. Reduce first: lower the trainer's splat cap, or use GSOPs Reduce in Houdini.
 
 ## Parameters (URL)
 
@@ -127,16 +148,15 @@ scenes. Reduce first: lower the trainer's splat cap, or use GSOPs Reduce in Houd
 | `loop` | 12 | Drift loop in seconds; motion repeats exactly |
 | `mode` | `vr` | `ar` = passthrough: the memory floats in your room |
 | `flip` | 1 | Rotate COLMAP y-down to y-up (set 0 if upside down) |
-| `fit` | auto | `1` = diorama, `0` = real scale at a capture camera |
-| `scale` | 1 | Scale when not fitting |
-| `startCam` | middle | Index of the capture camera you start at |
-| `eye` | 1.6 | Eye height in metres when starting at a camera |
 | `rotY` | 0 | Extra yaw of the capture, degrees |
-| `offset`, `turn` | — | Start this far (x,y,z metres) / degrees from the camera |
-| `speed` | 1.2 | Stick locomotion, m/s |
+| `speed` | 1.4 | Stick locomotion, m/s |
 | `debug` | 0 | `1` = start in debug colours |
+| `ring` | 11 | Ring radius in metres |
+| `near` | 16 | Places closer than this (m) update every frame |
+| `leave`, `arrive` | 1.2, 2.6 | Stop transition seconds: dissolve / re-form |
 
-Example: `?splat=./my/scene.ply&cams=./my/cameras.json&a0=8&a1=35&residue=0.15`
+URL values apply to every place and override `scenes.json`.
+Example: `?ring=14&a0=8&a1=35&residue=0.15`
 
 ## How it works
 
@@ -150,9 +170,10 @@ runs per splat on the GPU each frame:
    collapses to an isotropic mote, it drifts on a loop-safe field (time enters
    only through cos/sin of a phase), and its opacity falls to `residue`.
 
+Each place has its own uniforms, so its own cameras and erosion settings.
 `src/cameras.js` parses `cameras.json` and COLMAP text models into the
-splat's local frame. `src/main.js` is the XR Blocks script: placement,
-locomotion, gizmos, file loading.
+splat's local frame. `src/main.js` is the XR Blocks script: ring layout,
+locomotion, stops, update throttling, gizmos.
 
 ## Known limitations
 
@@ -184,7 +205,8 @@ src/main.js           XR Blocks script: load, place, locomotion, input
 src/viewcone.js       Spark dyno modifier (the erosion)
 src/cameras.js        cameras.json / COLMAP parsers, virtual capture arc
 src/style.css         panel styling
-public/scenes/        D02, N04, Ginebra, D05 as surfel splats + authored cameras; scenes.json
+public/scenes/        D02, N04, Ginebra, D05 (cut, surfel splats) + authored cameras; scenes.json (layout + anchors)
+docs/layout.png       top view of the shared space
 public/demo/          bundled procedural test capture (150k splats, 13 cameras)
 tools/prepare_scene.py     point cloud -> surfel splats + authored cameras
 public/sim/void.json  empty desktop-simulator environment for VR mode

@@ -120,11 +120,12 @@ def write_splat_ply(path, P, C, scales, q, alpha):
         fh.write(data.tobytes())
 
 
-def analyse(P, floater, radius=None, azimuth=None, arc=150.0):
+def analyse(P, floater, radius=None, azimuth=None, arc=150.0, center=None, ground=None):
     core = P[~floater]
     lo, hi = np.percentile(core, 5, 0), np.percentile(core, 95, 0)
     mid = np.all((core[:, [0, 2]] > lo[[0, 2]]) & (core[:, [0, 2]] < hi[[0, 2]]), 1)
-    ground = float(np.percentile(core[mid, 1], 3))
+    if ground is None:
+        ground = float(np.percentile(core[mid, 1], 3))
 
     band = core[(core[:, 1] > ground + 0.3) & (core[:, 1] < ground + 2.5)]
     if len(band) < 200:
@@ -138,9 +139,11 @@ def analyse(P, floater, radius=None, azimuth=None, arc=150.0):
     H = gaussian_filter(H, 1.5)
     ix, iz = np.unravel_index(np.argmax(H), H.shape)
     cx, cz = x0 + (ix + 0.5) * bins, z0 + (iz + 0.5) * bins
+    if center is not None:
+        cx, cz = center
     # the density peak sits on the subject's surface (bark, not the trunk's
     # axis): re-centre on the mass of the structure around it, twice
-    for _ in range(2):
+    for _ in range(0 if center is not None else 2):
         near = np.hypot(band[:, 0] - cx, band[:, 2] - cz) < 3.0
         if near.sum() > 50:
             cx, cz = float(band[near, 0].mean()), float(band[near, 2].mean())
@@ -195,18 +198,43 @@ def main():
     ap.add_argument("--radius", type=float)
     ap.add_argument("--azimuth", type=float)
     ap.add_argument("--max-splat", type=float, default=0.06)
+    ap.add_argument("--keep", type=float, help="crop: keep points within this horizontal radius (m) of the subject")
+    ap.add_argument("--fade", type=float, default=1.5, help="crop: soft opacity fade width (m) at the edge")
+    ap.add_argument("--height", type=float, default=14.0, help="crop: drop points this far above the ground (m)")
+    ap.add_argument("--max-points", type=int, help="random subsample to at most this many splats")
+    ap.add_argument("--center", help="override the detected subject centre: x,z")
+    ap.add_argument("--ground", type=float, help="override the detected ground height")
     a = ap.parse_args()
 
     P, C = load_xyzrgb(a.src)
     scales, q, alpha, floater, d = surfels(P, C, a.max_splat)
-    info = analyse(P, floater, a.radius, a.azimuth, a.arc)
+    center = tuple(map(float, a.center.split(','))) if a.center else None
+    info = analyse(P, floater, a.radius, a.azimuth, a.arc, center, a.ground)
     cams = make_cameras(info, a.arc, a.count)
+
+    # crop to the place: a soft-edged cylinder around the subject, so several
+    # scenes can share one space without their stray far points overlapping
+    if a.keep:
+        cx, _, cz = info["center"]
+        rh = np.hypot(P[:, 0] - cx, P[:, 2] - cz)
+        keep = (rh < a.keep) & (P[:, 1] > info["ground"] - 0.5) & (P[:, 1] < info["ground"] + a.height)
+        edge = np.clip((a.keep - rh) / max(a.fade, 1e-3), 0, 1)
+        alpha = alpha * (edge * edge * (3 - 2 * edge))
+        P, C, scales, q, alpha, floater, d = (x[keep] for x in (P, C, scales, q, alpha, floater, d))
+    if a.max_points and len(P) > a.max_points:
+        idx = np.sort(np.random.default_rng(3).choice(len(P), a.max_points, replace=False))
+        grow = math.sqrt(len(P) / a.max_points)  # keep surface coverage
+        P, C, q, alpha, floater, d = (x[idx] for x in (P, C, q, alpha, floater, d))
+        scales = np.minimum(scales[idx] * grow, a.max_splat * 1.5)
 
     os.makedirs(a.out, exist_ok=True)
     write_splat_ply(os.path.join(a.out, a.id + ".ply"), P, C, scales, q, alpha)
     with open(os.path.join(a.out, a.id + ".cameras.json"), "w") as fh:
         json.dump(cams, fh, indent=1)
-    info.update(points=len(P), floaters=int(floater.sum()), spacing_median=float(np.median(d)))
+    mid = cams[len(cams) // 2]
+    info.update(points=len(P), floaters=int(floater.sum()), spacing_median=float(np.median(d)),
+                anchor={"center": [info["center"][0], info["ground"], info["center"][2]],
+                        "view": mid["position"]})
     print(json.dumps({a.id: info}, indent=1))
 
 

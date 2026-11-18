@@ -1,249 +1,259 @@
 // Experiment 1 — Viewcone Erosion
 // WebXR (Meta Quest 3 Browser) with XR Blocks + Spark.
 //
-// A Gaussian-splat capture stays photographic where the original camera stood
-// and erodes into drifting motes wherever you look at it from a place nobody
-// photographed it from.
+// Several captured places share one dark space. They stand on a ring around a
+// central plaza, each with its photographed side facing the centre. Every
+// place stays photographic where its camera stood and erodes into drifting
+// motes wherever you view it from a place nobody photographed it from.
+//
+// Walk (or stick-move) from one to another. Trigger / pinch dissolves the
+// world and re-forms it with you standing at the next place's capture
+// viewpoint: plaza -> D02 -> N04 -> Ginebra -> D05 -> plaza.
 
 import * as THREE from 'three';
 import * as xb from 'xrblocks';
 import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 
-import { camerasFromFiles, camerasFromUrl, syntheticArc } from './cameras.js';
+import { camerasFromUrl } from './cameras.js';
 import { MAX_CAMS, createViewconeModifier, createViewconeUniforms } from './viewcone.js';
 
-// ---------------------------------------------------------------- scenes
-// public/scenes/scenes.json lists the bundled captures. Each entry may carry
-// its own parameter defaults; URL parameters still override them.
-let SCENES = [];
-try {
-  SCENES = (await (await fetch('./scenes/scenes.json')).json()).scenes;
-} catch (err) {
-  console.warn('[viewcone] no scenes.json', err);
-}
+// ---------------------------------------------------------------- settings
 const url = new URLSearchParams(location.search);
-const sceneId = url.get('scene') || (url.get('splat') ? null : SCENES[0]?.id);
-const SCENE = SCENES.find((s) => s.id === sceneId) || null;
 
-// Precedence: URL > scene defaults > built-in defaults.
-const q = new URLSearchParams({ ...(SCENE?.params || {}), ...Object.fromEntries(url) });
-const num = (k, d) => (q.has(k) ? Number(q.get(k)) : d);
-const vec = (k, d) => (q.has(k) ? new THREE.Vector3(...q.get(k).split(',').map(Number)) : d);
-
-const P = {
-  splat: url.get('splat') || SCENE?.splat || './demo/clearing.ply',
-  cams: url.get('cams') || (url.get('splat') ? null : SCENE?.cams || './demo/cameras.json'),
-  mode: q.get('mode') === 'ar' ? 'ar' : 'vr',
-  flip: num('flip', 1) === 1, // COLMAP y-down -> three.js y-up
-  fit: q.has('fit') ? num('fit', 1) === 1 : null, // null = auto (fit when no cameras)
-  fitSize: num('fitSize', 1.2), // metres, longest side when fitting
-  fitPos: vec('fitPos', new THREE.Vector3(0, 1.3, -1.2)),
-  scale: num('scale', 1),
-  eye: num('eye', 1.6), // head height used when starting at a capture camera
-  startCam: q.has('startCam') ? num('startCam', 0) : null, // null = middle of the capture
-  rotY: num('rotY', 0),
-  offset: vec('offset', null), // metres: start this far from the capture camera
-  turn: num('turn', 0), // degrees: initial turn about your head
-  // erosion
-  a0: num('a0', 12), // degrees: fully intact below this angle
-  a1: num('a1', 50), // degrees: fully eroded above this angle
-  haze: num('haze', 0.7), // 0..1: where eroded motes start fading out
-  residue: num('residue', 0.3), // 0..1: opacity left when fully eroded
-  mote: num('mote', 0.008), // metres: mote radius
-  amp: num('amp', 0.06), // metres: drift amplitude when fully eroded
-  freq: num('freq', 3), // 1/metres: drift field frequency
-  loop: num('loop', 12), // seconds per drift cycle (exact loop)
-  speed: num('speed', 1.2), // m/s locomotion
-  debug: num('debug', 0) === 1,
+const DEFAULTS = {
+  flip: 1, // COLMAP y-down -> three.js y-up (bundled scenes set 0)
+  rotY: 0,
+  a0: 12, // degrees: fully intact below this angle off a capture ray
+  a1: 50, // degrees: fully eroded above this angle
+  haze: 0.7, // 0..1: erosion level where motes start thinning out
+  residue: 0.3, // 0..1: opacity left when fully eroded
+  mote: 0.008, // metres: mote radius
+  amp: 0.06, // metres: drift amplitude when fully eroded
+  freq: 3, // 1/metres: drift field frequency
 };
 
+const G = {
+  mode: url.get('mode') === 'ar' ? 'ar' : 'vr',
+  loop: Number(url.get('loop') ?? 12), // seconds per drift cycle (exact loop)
+  speed: Number(url.get('speed') ?? 1.4), // m/s stick locomotion
+  debug: url.get('debug') === '1',
+  ring: url.has('ring') ? Number(url.get('ring')) : null, // metres, overrides scenes.json
+  leave: Number(url.get('leave') ?? 1.2), // seconds: world dissolves before a jump
+  arrive: Number(url.get('arrive') ?? 2.6), // seconds: world re-forms after it
+  near: Number(url.get('near') ?? 16), // metres: places closer than this update every frame
+  eye: 1.6,
+};
+
+function settingsFor(scene) {
+  const out = { ...DEFAULTS, ...(scene.params || {}) };
+  for (const k of Object.keys(DEFAULTS)) if (url.has(k)) out[k] = Number(url.get(k));
+  out.flip = Number(out.flip) === 1;
+  return out;
+}
+
+const manifest = await (await fetch('./scenes/scenes.json')).json();
+const SCENES = manifest.scenes;
+const RING = G.ring ?? manifest.layout?.radius ?? 11;
+
+// ---------------------------------------------------------------- helpers
+const Y = new THREE.Vector3(0, 1, 0);
+const smooth = (x) => x * x * (3 - 2 * x);
+const yawOf = (v) => Math.atan2(v.x, v.z);
+const qYaw = (a) => new THREE.Quaternion().setFromAxisAngle(Y, a);
+
 const statusEl = document.getElementById('status');
+const sceneEl = document.getElementById('sceneName');
 const setStatus = (s) => {
   if (statusEl) statusEl.textContent = s;
   console.log('[viewcone]', s);
 };
 
+function makeTitle() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 192;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, opacity: 0 });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.225), mat);
+  mesh.renderOrder = 999;
+  mesh.visible = false;
+  mesh.userData.write = (title, sub) => {
+    const g = canvas.getContext('2d');
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.textAlign = 'center';
+    g.fillStyle = 'rgb(232, 228, 220)';
+    g.font = '600 64px ui-monospace, Menlo, monospace';
+    g.fillText(title, 512, 92);
+    g.fillStyle = 'rgb(170, 163, 154)';
+    g.font = '36px ui-monospace, Menlo, monospace';
+    g.fillText(sub, 512, 150);
+    tex.needsUpdate = true;
+  };
+  return mesh;
+}
+
+/** Faint dust on the floor everywhere: a ground reference in the void. */
+function makeFloorDust(radius) {
+  const n = 9000;
+  const pos = new Float32Array(n * 3);
+  let s = 12345;
+  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < n; i++) {
+    const r = radius * Math.sqrt(rnd());
+    const a = rnd() * Math.PI * 2;
+    pos[i * 3] = Math.cos(a) * r;
+    pos[i * 3 + 1] = 0.005;
+    pos[i * 3 + 2] = Math.sin(a) * r;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0x8a847b, size: 2, sizeAttenuation: false, transparent: true, opacity: 0.35, depthWrite: false });
+  return new THREE.Points(geo, mat);
+}
+
 // ---------------------------------------------------------------- the script
-const Y = new THREE.Vector3(0, 1, 0);
-
-class ViewconeErosion extends xb.Script {
+class SharedSpace extends xb.Script {
   async init() {
-    this.u = createViewconeUniforms(P);
-    this.u.debug.value = P.debug ? 1 : 0;
-
-    // Everything captured lives in `world`, which locomotion moves.
-    this.world = new THREE.Group();
+    this.world = new THREE.Group(); // everything placed; locomotion moves this
     this.add(this.world);
 
-    // One SparkRenderer per scene. maxStdDev sqrt(5) is a little softer than
-    // the default sqrt(8) and cheaper on Quest's fill rate.
     this.spark = new SparkRenderer({ renderer: xb.core.renderer, maxStdDev: Math.sqrt(5) });
     xb.scene.add(this.spark);
 
-    if (P.mode === 'vr') {
+    if (G.mode === 'vr') {
       xb.scene.background = new THREE.Color(0x060606);
       xb.core.renderer.setClearColor(0x060606, 1);
+      this.world.add(makeFloorDust(RING + 8));
     }
 
-    this.camsLocal = []; // capture cameras in splat-local coordinates
-    this.camsSynthetic = true;
+    this.title = makeTitle();
+    xb.scene.add(this.title);
+
+    this.places = []; // per scene: { scene, cfg, u, mesh, cams, center, view, viewFwd, camW }
+    this.stops = []; // travel stops: plaza + each place's viewpoint
+    this.stop = 0;
     this.showCams = false;
+    this.frame = 0;
     this.lastT = performance.now() / 1000;
     this.buttons = {};
     this.turnLatch = {};
-
-    // scratch
     this._head = new THREE.Vector3();
-    this._camW = []; // world-space cache: { p, f, cos, d2 }
+    this.zone = null;
 
-    await this.loadSplat({ url: P.splat });
-    if (P.cams) {
-      try {
-        this.setCameras(await camerasFromUrl(P.cams), false);
-      } catch (err) {
-        setStatus(`Could not load cameras: ${err.message}\nUsing a virtual capture arc.`);
-      }
-    }
+    this.phase = 'arriving';
+    this.phaseT = 0;
+    this.force = 1;
+
+    xb.core.renderer.xr.addEventListener('sessionstart', () => this.bindSession());
+
+    setStatus('Loading places…');
+    const n = SCENES.length;
+    await Promise.all(SCENES.map((scene, i) => this.loadPlace(scene, i, n)));
+    this.places.sort((a, b) => a.order - b.order);
+
+    this.stops = [
+      { label: 'Plaza', sub: 'the centre', pos: new THREE.Vector3(0, G.eye, 0), fwd: new THREE.Vector3(0, 0, -1) },
+      ...this.places.map((p) => ({ label: p.scene.label, sub: 'capture viewpoint', pos: p.view, fwd: p.viewFwd, place: p })),
+    ];
+    const total = this.places.reduce((s, p) => s + (p.mesh.numSplats ?? 0), 0);
+    setStatus(`${this.places.length} places · ${(total / 1000).toFixed(0)}k splats · ring ${RING} m`);
+    this.updatePanel('Plaza');
+    this.showTitle('Plaza', `${this.places.length} places around you`);
+    this.phase = 'arriving';
+    this.phaseT = 0;
   }
 
-  // ------------------------------------------------------------ loading
-  async loadSplat(source) {
-    setStatus('Loading splat…');
-    if (this.mesh) {
-      this.world.remove(this.mesh);
-      this.mesh.dispose?.();
-      this.mesh = null;
-    }
-    const mesh = new SplatMesh({
-      ...source,
-      worldModifier: createViewconeModifier(this.u),
-    });
-    await mesh.initialized;
-    this.mesh = mesh;
+  // ------------------------------------------------------------ places
+  async loadPlace(scene, i, n) {
+    const cfg = settingsFor(scene);
+    const u = createViewconeUniforms(cfg);
+    u.debug.value = G.debug ? 1 : 0;
+    u.force.value = 1;
+    const mesh = new SplatMesh({ url: scene.splat, worldModifier: createViewconeModifier(u) });
+    const [cams] = await Promise.all([scene.cams ? camerasFromUrl(scene.cams).catch(() => []) : [], mesh.initialized]);
+
+    // base orientation of the capture frame
+    const qb = new THREE.Quaternion();
+    if (cfg.flip) qb.set(1, 0, 0, 0);
+    if (cfg.rotY) qb.premultiply(qYaw(THREE.MathUtils.degToRad(cfg.rotY)));
+
+    // anchor: subject centre on the ground, and the side it was photographed from
+    const a = scene.anchor || {};
+    const c = new THREE.Vector3(...(a.center || [0, 0, 0])).applyQuaternion(qb);
+    const midCam = cams[Math.floor(cams.length / 2)];
+    const v = a.view ? new THREE.Vector3(...a.view) : midCam ? midCam.position.clone() : new THREE.Vector3(0, 0, 1);
+    v.applyQuaternion(qb);
+    const side = new THREE.Vector3(v.x - c.x, 0, v.z - c.z);
+
+    // slot on the ring, clockwise from straight ahead (-Z)
+    const ang = (i / n) * Math.PI * 2;
+    const slot = new THREE.Vector3(RING * Math.sin(ang), 0, -RING * Math.cos(ang));
+    const toCentre = slot.clone().negate();
+    const yaw = yawOf(toCentre) - yawOf(side);
+
+    mesh.quaternion.copy(qb).premultiply(qYaw(yaw));
+    const cRot = c.clone().applyQuaternion(qYaw(yaw));
+    mesh.position.set(slot.x - cRot.x, -cRot.y, slot.z - cRot.z);
+    mesh.updateMatrix();
+    mesh.updateMatrixWorld(true);
     this.world.add(mesh);
-    this.numSplats = mesh.numSplats ?? mesh.packedSplats?.numSplats ?? 0;
 
-    if (this.camsSynthetic || !this.camsLocal.length) {
-      this.placeAsDiorama();
-      this.makeSyntheticCameras();
-    } else {
-      this.placeForCameras();
-    }
-    this.rebuildGizmos();
-    this.report();
+    // travel target: the middle capture camera, at eye height above this ground
+    const view = midCam ? midCam.position.clone().applyMatrix4(mesh.matrix) : slot.clone().addScaledVector(toCentre.clone().normalize(), 3);
+    view.y = G.eye;
+    const viewFwd = midCam
+      ? midCam.forward.clone().applyQuaternion(mesh.quaternion).setY(0).normalize()
+      : toCentre.clone().negate().normalize();
+
+    const place = {
+      scene, cfg, u, mesh, cams, order: i, center: slot, view, viewFwd,
+      camW: cams.map(() => ({ p: new THREE.Vector3(), f: new THREE.Vector3(), cos: 1, d2: 0 })),
+      gizmo: this.makeGizmo(mesh, cams),
+    };
+    this.places.push(place);
+    this.updateCameras(place);
+    mesh.updateVersion();
   }
 
-  setCameras(cams, synthetic) {
-    if (!cams.length) throw new Error('no cameras found');
-    this.camsLocal = cams;
-    this.camsSynthetic = synthetic;
-    if (!synthetic) this.placeForCameras();
-    this.rebuildGizmos();
-    this.report();
-  }
-
-  report() {
-    const n = this.numSplats ? `${(this.numSplats / 1000).toFixed(0)}k splats` : 'splats loaded';
-    const warn = this.numSplats > 600000 ? '\n⚠ Over ~600k splats will drop frames on Quest 3.' : '';
-    const src = this.camsSynthetic ? 'virtual arc (demo)' : 'capture';
-    setStatus(`${n} · ${this.camsLocal.length} ${src} cameras · ${P.mode.toUpperCase()}${warn}`);
-  }
-
-  // ------------------------------------------------------------ placement
-  baseOrientation(mesh) {
-    mesh.quaternion.identity();
-    if (P.flip) mesh.quaternion.set(1, 0, 0, 0);
-    if (P.rotY) {
-      mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(Y, THREE.MathUtils.degToRad(P.rotY)));
-    }
-  }
-
-  /** Small object or whole scene shrunk to a tabletop "memory" in front of you. */
-  placeAsDiorama() {
-    const mesh = this.mesh;
-    this.baseOrientation(mesh);
-    const box = mesh.getBoundingBox(true);
-    const size = box.getSize(new THREE.Vector3());
-    const s = P.fit === false ? P.scale : P.fitSize / Math.max(size.x, size.y, size.z, 1e-6);
-    mesh.scale.setScalar(s);
-    mesh.position.set(0, 0, 0);
-    mesh.updateMatrix();
-    const c = box.getCenter(new THREE.Vector3()).applyMatrix4(mesh.matrix);
-    mesh.position.copy(P.fitPos).sub(c);
-    mesh.updateMatrixWorld(true);
-    this.dioramaCenter = P.fitPos.clone();
-    this.dioramaRadius = Math.max(0.6, P.fitPos.length() * 0.95);
-  }
-
-  /** Start where the photographer stood: capture camera N at your eyes, facing its view. */
-  placeForCameras() {
-    const mesh = this.mesh;
-    if (!mesh || !this.camsLocal.length) return;
-    if (P.fit === true) {
-      this.placeAsDiorama();
-      return;
-    }
-    this.baseOrientation(mesh);
-    mesh.scale.setScalar(P.scale);
-    const n = this.camsLocal.length;
-    const idx = P.startCam === null ? Math.floor(n / 2) : Math.min(P.startCam, n - 1);
-    const cam = this.camsLocal[idx];
-    // yaw so the camera's horizontal forward points down -Z
-    const fw = cam.forward.clone().applyQuaternion(mesh.quaternion);
-    const yaw = Math.PI - Math.atan2(fw.x, fw.z);
-    mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(Y, yaw));
-    mesh.position.set(0, 0, 0);
-    mesh.updateMatrix();
-    const pw = cam.position.clone().applyMatrix4(mesh.matrix);
-    mesh.position.set(-pw.x, P.eye - pw.y, -pw.z);
-    mesh.updateMatrixWorld(true);
-    // reset locomotion so you begin exactly at that camera (or offset from it)
-    this.world.position.set(0, 0, 0);
-    this.world.quaternion.identity();
-    if (P.offset) this.world.position.sub(P.offset);
-    if (P.turn) {
-      const head = new THREE.Vector3(0, P.eye, 0);
-      const ang = THREE.MathUtils.degToRad(P.turn);
-      this.world.position.sub(head).applyMatrix4(new THREE.Matrix4().makeRotationY(ang)).add(head);
-      this.world.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(Y, ang));
-    }
-  }
-
-  makeSyntheticCameras() {
-    this.world.updateMatrixWorld(true);
-    const toLocal = this.mesh.matrixWorld.clone().invert();
-    const cams = syntheticArc({
-      center: this.dioramaCenter,
-      radius: this.dioramaRadius,
-      arcDeg: 110,
-      count: 11,
-      toLocal,
-    });
-    this.camsLocal = cams;
-    this.camsSynthetic = true;
-  }
-
-  // ------------------------------------------------------------ gizmos
-  rebuildGizmos() {
-    if (this.gizmo) {
-      this.gizmo.parent?.remove(this.gizmo);
-      this.gizmo.geometry.dispose();
-      this.gizmo.material.dispose();
-      this.gizmo = null;
-    }
-    if (!this.mesh || !this.camsLocal.length) return;
-    const s = this.mesh.scale.x || 1;
-    const len = 0.12 / s; // 12 cm in world units
+  makeGizmo(mesh, cams) {
+    if (!cams.length) return null;
     const pts = [];
-    for (const c of this.camsLocal) {
-      const tip = c.position.clone().addScaledVector(c.forward, len);
-      pts.push(c.position, tip);
-    }
-    const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    const mat = new THREE.LineBasicMaterial({ color: 0xffb24a, transparent: true, opacity: 0.9 });
-    this.gizmo = new THREE.LineSegments(geo, mat);
-    this.gizmo.visible = this.showCams;
-    this.mesh.add(this.gizmo);
+    for (const c of cams) pts.push(c.position, c.position.clone().addScaledVector(c.forward, 0.12));
+    const g = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: 0xffb24a, transparent: true, opacity: 0.9 })
+    );
+    g.visible = this.showCams;
+    mesh.add(g);
+    return g;
+  }
+
+  // ------------------------------------------------------------ travel
+  go(delta) {
+    if (!this.stops.length || this.phase === 'leaving') return;
+    const n = this.stops.length;
+    this.pendingStop = (((this.stop + delta) % n) + n) % n;
+    this.phase = 'leaving';
+    this.phaseT = 0;
+    this.leaveFrom = this.force;
+  }
+
+  /** Re-anchor the world so `stop` is under your head, facing where you look. */
+  jumpTo(index) {
+    this.stop = index;
+    const s = this.stops[index];
+    const cam = xb.core.camera;
+    const look = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())).setY(0);
+    if (look.lengthSq() < 1e-6) look.set(0, 0, -1);
+    const phi = yawOf(look) - yawOf(s.fwd);
+    const t = s.pos.clone().applyQuaternion(qYaw(phi));
+    this.world.quaternion.copy(qYaw(phi));
+    this.world.position.set(this._head.x - t.x, 0, this._head.z - t.z);
+    this.world.updateMatrixWorld(true);
+    this.showTitle(s.label, s.sub);
+    this.updatePanel(s.label);
+    this.zone = s.place?.scene.id ?? null;
   }
 
   // ------------------------------------------------------------ per frame
@@ -251,48 +261,124 @@ class ViewconeErosion extends xb.Script {
     const now = performance.now() / 1000;
     const dt = Math.min(0.1, now - this.lastT);
     this.lastT = now;
-
-    this.u.phase.value = ((now % P.loop) / P.loop) * Math.PI * 2;
+    this.frame++;
 
     if (frame) this.handleXRInput(frame, dt);
+    xb.core.camera.getWorldPosition(this._head);
 
-    const camera = xb.core.camera;
-    camera.getWorldPosition(this._head);
-    this.u.head.value.copy(this._head);
+    this.updateTransition(dt);
+    this.updateTitle(dt);
 
-    if (this.mesh && this.camsLocal.length) this.updateNearestCameras();
-    this.mesh?.updateVersion();
+    const phase = ((now % G.loop) / G.loop) * Math.PI * 2;
+    const inTransition = this.phase !== 'idle';
+    this.world.updateMatrixWorld(true);
+
+    for (const p of this.places) {
+      p.u.phase.value = phase;
+      p.u.force.value = this.force;
+      p.u.head.value.copy(this._head);
+      const centreW = p.center.clone().applyMatrix4(this.world.matrixWorld);
+      const d = Math.hypot(centreW.x - this._head.x, centreW.z - this._head.z);
+      p.dist = d;
+      // near places every frame; far ones every 6th frame, staggered
+      if (inTransition || d < G.near || (this.frame + p.order) % 6 === 0) {
+        this.updateCameras(p);
+        p.mesh.updateVersion();
+      }
+    }
+    this.updateZone();
   }
 
-  updateNearestCameras() {
-    this.world.updateMatrixWorld(true);
-    const m = this.mesh.matrixWorld;
-    const nrm = new THREE.Matrix3().getNormalMatrix(m);
-    const cams = this.camsLocal;
-    if (this._camW.length !== cams.length) {
-      this._camW = cams.map(() => ({ p: new THREE.Vector3(), f: new THREE.Vector3(), cos: 1, d2: 0 }));
+  updateTransition(dt) {
+    this.phaseT += dt;
+    if (this.phase === 'leaving') {
+      const k = Math.min(1, this.phaseT / G.leave);
+      this.force = this.leaveFrom + (1 - this.leaveFrom) * smooth(k);
+      if (k >= 1) {
+        this.jumpTo(this.pendingStop);
+        this.phase = 'arriving';
+        this.phaseT = 0;
+      }
+    } else if (this.phase === 'arriving') {
+      const k = Math.min(1, this.phaseT / G.arrive);
+      this.force = 1 - smooth(k);
+      if (k >= 1) this.phase = 'idle';
     }
-    for (let i = 0; i < cams.length; i++) {
-      const w = this._camW[i];
-      w.p.copy(cams[i].position).applyMatrix4(m);
-      w.f.copy(cams[i].forward).applyMatrix3(nrm).normalize();
-      w.cos = Math.cos(cams[i].halfFov);
+  }
+
+  updateCameras(p) {
+    if (!p.cams.length) return;
+    const m = p.mesh.matrixWorld;
+    const nrm = new THREE.Matrix3().getNormalMatrix(m);
+    for (let i = 0; i < p.cams.length; i++) {
+      const w = p.camW[i];
+      w.p.copy(p.cams[i].position).applyMatrix4(m);
+      w.f.copy(p.cams[i].forward).applyMatrix3(nrm).normalize();
+      w.cos = Math.cos(p.cams[i].halfFov);
       w.d2 = w.p.distanceToSquared(this._head);
     }
-    const order = this._camW.slice().sort((a, b) => a.d2 - b.d2);
-    const n = Math.min(MAX_CAMS, order.length);
-    for (let k = 0; k < n; k++) {
-      this.u.pos[k].value.copy(order[k].p);
-      this.u.fwd[k].value.copy(order[k].f);
-      this.u.cosFov[k].value = order[k].cos;
+    const order = p.camW.slice().sort((a, b) => a.d2 - b.d2);
+    const k = Math.min(MAX_CAMS, order.length);
+    for (let j = 0; j < k; j++) {
+      p.u.pos[j].value.copy(order[j].p);
+      p.u.fwd[j].value.copy(order[j].f);
+      p.u.cosFov[j].value = order[j].cos;
     }
-    this.u.ncam.value = n;
+    p.u.ncam.value = k;
+  }
+
+  /** Name a place when you walk into it. */
+  updateZone() {
+    if (this.phase !== 'idle' || !this.places.length) return;
+    let nearest = null;
+    for (const p of this.places) if (!nearest || p.dist < nearest.dist) nearest = p;
+    const id = nearest.dist < 6.5 ? nearest.scene.id : nearest.dist > RING - 4 ? null : this.zone;
+    if (id === this.zone) return;
+    this.zone = id;
+    const label = id ? nearest.scene.label : 'Plaza';
+    this.updatePanel(label);
+    if (id) this.showTitle(label, 'you walked in');
+  }
+
+  updatePanel(label) {
+    if (sceneEl) sceneEl.textContent = label;
+  }
+
+  // ------------------------------------------------------------ title
+  showTitle(text, sub) {
+    this.title.userData.write(text, sub);
+    const cam = xb.core.camera;
+    const pos = cam.getWorldPosition(new THREE.Vector3());
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
+    this.title.position.copy(pos).addScaledVector(dir, 1.6);
+    this.title.position.y = pos.y - 0.15;
+    this.title.lookAt(pos.x, this.title.position.y, pos.z);
+    this.title.visible = true;
+    this.titleT = 0;
+  }
+
+  updateTitle(dt) {
+    if (!this.title.visible) return;
+    this.titleT += dt;
+    const t = this.titleT;
+    const o = t < 0.6 ? t / 0.6 : t < 3 ? 1 : Math.max(0, 1 - (t - 3) / 1.2);
+    this.title.material.opacity = 0.85 * o;
+    if (o <= 0) this.title.visible = false;
   }
 
   // ------------------------------------------------------------ input
+  bindSession() {
+    const session = xb.core.renderer.xr.getSession();
+    if (!session || session.__viewconeBound) return;
+    session.__viewconeBound = true;
+    // 'select' = trigger on controllers, pinch with hand tracking
+    session.addEventListener('select', (e) => this.go(e.inputSource.handedness === 'left' ? -1 : 1));
+  }
+
   handleXRInput(frame, dt) {
     const session = frame.session;
     if (!session) return;
+    this.bindSession();
     const camera = xb.core.camera;
     for (const src of session.inputSources) {
       const gp = src.gamepad;
@@ -300,18 +386,14 @@ class ViewconeErosion extends xb.Script {
       const hand = src.handedness;
       const ax = Math.abs(gp.axes[2]) > 0.15 ? gp.axes[2] : 0;
       const ay = Math.abs(gp.axes[3]) > 0.15 ? gp.axes[3] : 0;
-
       if (hand === 'left' && (ax || ay)) {
-        // head-relative horizontal move; moving you = moving the world back
-        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
-        fwd.y = 0;
-        fwd.normalize();
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
         const right = new THREE.Vector3().crossVectors(fwd, Y);
-        const move = fwd.multiplyScalar(-ay).add(right.multiplyScalar(ax)).multiplyScalar(P.speed * dt);
+        const move = fwd.multiplyScalar(-ay).add(right.multiplyScalar(ax)).multiplyScalar(G.speed * dt);
         this.world.position.sub(move);
       }
       if (hand === 'right') {
-        if (ay) this.world.position.y += ay * P.speed * 0.6 * dt; // stick up = rise
+        if (ay) this.world.position.y += ay * G.speed * 0.6 * dt;
         if (Math.abs(gp.axes[2]) > 0.7 && !this.turnLatch[hand]) {
           this.turnLatch[hand] = true;
           this.snapTurn(Math.sign(gp.axes[2]) * THREE.MathUtils.degToRad(30));
@@ -319,8 +401,6 @@ class ViewconeErosion extends xb.Script {
           this.turnLatch[hand] = false;
         }
       }
-
-      // A/X (index 4) toggles capture cameras, B/Y (index 5) toggles debug colours
       const prev = this.buttons[hand] || [];
       const pressed = gp.buttons.map((b) => b.pressed);
       if (pressed[4] && !prev[4]) this.toggleCams();
@@ -331,79 +411,43 @@ class ViewconeErosion extends xb.Script {
 
   snapTurn(angle) {
     const head = this._head;
-    const R = new THREE.Matrix4().makeRotationY(angle);
-    this.world.position.sub(head).applyMatrix4(R).add(head);
-    this.world.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(Y, angle));
+    this.world.position.sub(head).applyMatrix4(new THREE.Matrix4().makeRotationY(angle)).add(head);
+    this.world.quaternion.premultiply(qYaw(angle));
   }
 
   toggleCams() {
     this.showCams = !this.showCams;
-    if (this.gizmo) this.gizmo.visible = this.showCams;
+    for (const p of this.places) if (p.gizmo) p.gizmo.visible = this.showCams;
   }
 
   toggleDebug() {
-    this.u.debug.value = this.u.debug.value > 0.5 ? 0 : 1;
+    const on = this.places[0]?.u.debug.value > 0.5 ? 0 : 1;
+    for (const p of this.places) p.u.debug.value = on;
   }
 
   onKeyDown(event) {
+    if (event.code === 'KeyN' || event.code === 'ArrowRight' || event.code === 'PageDown') this.go(1);
+    if (event.code === 'KeyP' || event.code === 'ArrowLeft' || event.code === 'PageUp') this.go(-1);
     if (event.code === 'KeyC') this.toggleCams();
     if (event.code === 'KeyV') this.toggleDebug();
   }
 
   dispose() {
-    this.gizmo?.geometry.dispose();
-    this.gizmo?.material.dispose();
-    this.mesh?.dispose?.();
     this.spark?.dispose?.();
   }
 }
 
 // ---------------------------------------------------------------- start
-const app = new ViewconeErosion();
+const app = new SharedSpace();
 const options = new xb.Options();
-// Quest Browser can hang with MSAA + per-frame passes + Spark readbacks.
-options.antialias = false;
-if (P.mode === 'vr') {
+options.antialias = false; // Quest Browser: MSAA + Spark readbacks can hang
+if (G.mode === 'vr') {
   options.enableVR();
-  // Desktop simulator: an empty void instead of the default living room,
-  // since this piece is the whole environment.
   options.simulator.environments = [{ manifestPath: './sim/void.json' }];
   options.simulator.activeEnvironmentIndex = 0;
 }
 xb.add(app);
 await xb.init(options);
 
-// ---------------------------------------------------------------- scene picker
-const sceneSelect = document.getElementById('scene');
-if (sceneSelect) {
-  for (const s of SCENES) sceneSelect.add(new Option(s.label, s.id, false, s.id === SCENE?.id));
-  if (!SCENE) sceneSelect.add(new Option('Custom file', '', true, true));
-  sceneSelect.addEventListener('change', () => {
-    // reload with the new scene; keep mode and erosion overrides, drop file ones
-    const next = new URLSearchParams(location.search);
-    for (const k of ['splat', 'cams', 'scene', 'offset', 'turn', 'startCam']) next.delete(k);
-    if (sceneSelect.value) next.set('scene', sceneSelect.value);
-    location.search = next.toString();
-  });
-}
-
-// ---------------------------------------------------------------- file pickers
-document.getElementById('splatFile')?.addEventListener('change', async (e) => {
-  const f = e.target.files?.[0];
-  if (!f) return;
-  try {
-    await app.loadSplat({ fileBytes: await f.arrayBuffer(), fileName: f.name });
-  } catch (err) {
-    setStatus(`Could not load splat: ${err.message}`);
-  }
-});
-
-document.getElementById('camFiles')?.addEventListener('change', async (e) => {
-  const files = e.target.files;
-  if (!files?.length) return;
-  try {
-    app.setCameras(await camerasFromFiles(files), false);
-  } catch (err) {
-    setStatus(`Could not read cameras: ${err.message}`);
-  }
-});
+document.getElementById('prevScene')?.addEventListener('click', () => app.go(-1));
+document.getElementById('nextScene')?.addEventListener('click', () => app.go(1));

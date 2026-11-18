@@ -1,33 +1,105 @@
 {
+  "layout": {
+    "kind": "ring",
+    "radius": 11,
+    "note": "Scenes stand on a ring around a central plaza, each with its photographed side facing the centre. Order = clockwise from straight ahead."
+  },
   "scenes": [
     {
       "id": "D02",
-      "label": "D02 · great trunk",
+      "label": "D02 \u00b7 great trunk",
       "splat": "./scenes/D02.ply",
       "cams": "./scenes/D02.cameras.json",
-      "params": { "flip": 0, "mote": 0.008, "amp": 0.06 }
+      "anchor": {
+        "center": [
+          0.046,
+          -3.275,
+          0.133
+        ],
+        "view": [
+          -2.135,
+          -1.675,
+          2.733
+        ]
+      },
+      "params": {
+        "flip": 0,
+        "mote": 0.008,
+        "amp": 0.06
+      }
     },
     {
       "id": "N04",
-      "label": "N04 · trunk with hollow",
+      "label": "N04 \u00b7 trunk with hollow",
       "splat": "./scenes/N04.ply",
       "cams": "./scenes/N04.cameras.json",
-      "params": { "flip": 0, "mote": 0.009, "amp": 0.07 }
+      "anchor": {
+        "center": [
+          -0.672,
+          0.658,
+          0.591
+        ],
+        "view": [
+          2.787,
+          2.258,
+          -2.311
+        ]
+      },
+      "params": {
+        "flip": 0,
+        "mote": 0.009,
+        "amp": 0.07
+      }
     },
     {
       "id": "Ginebra",
-      "label": "Ginebra · bench under trees",
+      "label": "Ginebra \u00b7 bench under trees",
       "splat": "./scenes/Ginebra.ply",
       "cams": "./scenes/Ginebra.cameras.json",
-      "params": { "flip": 0, "mote": 0.014, "amp": 0.09 }
+      "anchor": {
+        "center": [
+          0.098,
+          -3.796,
+          6.427
+        ],
+        "view": [
+          3.082,
+          -2.196,
+          8.516
+        ]
+      },
+      "params": {
+        "flip": 0,
+        "mote": 0.014,
+        "amp": 0.09
+      }
     },
     {
       "id": "D05",
-      "label": "D05 · foliage (sparse)",
+      "label": "D05 \u00b7 foliage",
       "splat": "./scenes/D05.ply",
       "cams": "./scenes/D05.cameras.json",
-      "params": { "flip": 0, "mote": 0.022, "amp": 0.12, "residue": 0.4 }
-    },
+      "anchor": {
+        "center": [
+          7.6,
+          -1.6,
+          7.5
+        ],
+        "view": [
+          10.822,
+          0.0,
+          9.36
+        ]
+      },
+      "params": {
+        "flip": 0,
+        "mote": 0.022,
+        "amp": 0.12,
+        "residue": 0.4
+      }
+    }
+  ],
+  "extra": [
     {
       "id": "demo",
       "label": "Procedural test clearing",

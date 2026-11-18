@@ -11,24 +11,24 @@
     <aside id="panel">
       <h1>Viewcone Erosion</h1>
       <p class="lead">
-        Matter holds where the camera stood and erodes everywhere else.
+        Four places share one space. Matter holds where the camera stood and erodes everywhere else.
       </p>
-      <label>Scene
-        <select id="scene"></select>
-      </label>
-      <label>Splat <span>.ply · .spz · .splat</span>
-        <input id="splatFile" type="file" accept=".ply,.spz,.splat,.ksplat" />
-      </label>
-      <label>Capture cameras <span>cameras.json · images.txt</span>
-        <input id="camFiles" type="file" accept=".json,.txt" multiple />
-      </label>
-      <p id="status">Loading demo splat…</p>
-      <details>
+      <p id="sceneName" class="scene">Plaza</p>
+      <div class="nav">
+        <button id="prevScene" type="button">‹ Previous stop</button>
+        <button id="nextScene" type="button">Next stop ›</button>
+      </div>
+      <p id="status">Loading…</p>
+      <details open>
         <summary>Controls</summary>
         <ul>
-          <li><b>Quest</b> · left stick: move · right stick ←→: snap turn · right stick ↑↓: up/down</li>
-          <li>A / X: show capture cameras · B / Y: erosion debug colours</li>
-          <li><b>Desktop simulator</b> · XR Blocks navigation · C: cameras · V: debug</li>
+          <li><b>Walk</b>, or left stick, from one place to another</li>
+          <li><b>Next stop</b> · right trigger or right-hand pinch</li>
+          <li><b>Previous stop</b> · left trigger or left-hand pinch</li>
+          <li>Stops: plaza → D02 → N04 → Ginebra → D05</li>
+          <li>Right stick: snap turn / up-down</li>
+          <li>A / X: capture cameras · B / Y: erosion debug colours</li>
+          <li><b>Desktop</b> · WASD walk · N / P or ← →: stops · C / V</li>
         </ul>
       </details>
     </aside>

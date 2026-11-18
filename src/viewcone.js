@@ -54,6 +54,7 @@ export function createViewconeUniforms(params) {
     amp: dyno.dynoFloat(params.amp),
     freq: dyno.dynoFloat(params.freq),
     phase: dyno.dynoFloat(0),
+    force: dyno.dynoFloat(0), // 0..1: erode everything (scene transitions)
     debug: dyno.dynoFloat(0),
     pos: [],
     fwd: [],
@@ -81,6 +82,7 @@ export function createViewconeModifier(u) {
     amp: 'float',
     freq: 'float',
     phase: 'float',
+    force: 'float',
     debug: 'float',
   };
   for (let k = 0; k < MAX_CAMS; k++) {
@@ -102,6 +104,7 @@ export function createViewconeModifier(u) {
       amp: u.amp,
       freq: u.freq,
       phase: u.phase,
+      force: u.force,
       debug: u.debug,
     };
     for (let k = 0; k < MAX_CAMS; k++) {
@@ -135,7 +138,7 @@ export function createViewconeModifier(u) {
           float best = 3.14159265;
           ${camChecks.join('\n')}
 
-          float e = smoothstep(${i.a0}, ${i.a1}, best);
+          float e = max(smoothstep(${i.a0}, ${i.a1}, best), ${i.force});
           float eHaze = smoothstep(${i.haze}, 1.0, e);
 
           // 1. shape: anisotropic splat -> small isotropic mote
