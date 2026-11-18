@@ -35,6 +35,28 @@ Alternatives to the LAN certificate:
   (GitHub Pages, Netlify, Vercel, Cloudflare Pages). A prebuilt `dist/` is
   included in this folder.
 
+### Meta Quest 2
+
+The app detects the headset from Quest Browser's user agent and picks a
+performance profile; force one with `?profile=quest2`, `quest3` or `desktop`.
+
+| Setting | Quest 2 | Quest 3 |
+| --- | --- | --- |
+| Places loaded | Lighter cuts in `public/scenes/q2/`: 206k splats total (D02 100k, N04 60k, Ginebra 35k, D05 11k) | Full cuts: 397k |
+| Render resolution | 0.8 × the headset's recommended size | 1.0 × |
+| Fixed foveation | Maximum (1) | 0.5 |
+| Splat footprint | 2 standard deviations, at most 96 px radius | √5 deviations, 256 px |
+| Faint splats skipped | Below 4/255 opacity | Below 2/255 |
+| Erosion updated every frame | Places within 9 m | Within 16 m |
+| Farther places updated | Every 12th frame | Every 6th frame |
+| Capture cameras checked per splat | 5 nearest | 8 nearest |
+
+Quest 2 has roughly half the GPU of a Quest 3, and splats are limited by fill
+rate (how many overlapping pixels get drawn), so the biggest wins are fewer
+splats, a lower resolution and a cap on huge splats close to your face. If it
+still stutters, try `?profile=quest2&near=6` first, then lower the counts with
+`tools/prepare_scene.py --max-points`.
+
 **On a desktop** the same URL opens the XR Blocks simulator (WASD + right-drag).
 
 ## The shared space
@@ -151,8 +173,9 @@ guidance for static scenes. Reduce first: lower the trainer's splat cap, or use 
 | `rotY` | 0 | Extra yaw of the capture, degrees |
 | `speed` | 1.4 | Stick locomotion, m/s |
 | `debug` | 0 | `1` = start in debug colours |
+| `profile` | auto | `quest2`, `quest3` or `desktop` (see Meta Quest 2) |
 | `ring` | 11 | Ring radius in metres |
-| `near` | 16 | Places closer than this (m) update every frame |
+| `near` | 9 / 16 | Places closer than this (m) update every frame (Quest 2 / others) |
 | `leave`, `arrive` | 1.2, 2.6 | Stop transition seconds: dissolve / re-form |
 
 URL values apply to every place and override `scenes.json`.
@@ -206,6 +229,7 @@ src/viewcone.js       Spark dyno modifier (the erosion)
 src/cameras.js        cameras.json / COLMAP parsers, virtual capture arc
 src/style.css         panel styling
 public/scenes/        D02, N04, Ginebra, D05 (cut, surfel splats) + authored cameras; scenes.json (layout + anchors)
+public/scenes/q2/     lighter cuts of the same places for the Quest 2 profile
 docs/layout.png       top view of the shared space
 public/demo/          bundled procedural test capture (150k splats, 13 cameras)
 tools/prepare_scene.py     point cloud -> surfel splats + authored cameras

@@ -26,7 +26,8 @@
         "flip": 0,
         "mote": 0.008,
         "amp": 0.06
-      }
+      },
+      "splatLite": "./scenes/q2/D02.ply"
     },
     {
       "id": "N04",
@@ -49,7 +50,8 @@
         "flip": 0,
         "mote": 0.009,
         "amp": 0.07
-      }
+      },
+      "splatLite": "./scenes/q2/N04.ply"
     },
     {
       "id": "Ginebra",
@@ -72,7 +74,8 @@
         "flip": 0,
         "mote": 0.014,
         "amp": 0.09
-      }
+      },
+      "splatLite": "./scenes/q2/Ginebra.ply"
     },
     {
       "id": "D05",
@@ -96,7 +99,8 @@
         "mote": 0.022,
         "amp": 0.12,
         "residue": 0.4
-      }
+      },
+      "splatLite": "./scenes/q2/D05.ply"
     }
   ],
   "extra": [
@@ -107,5 +111,8 @@
       "cams": "./demo/cameras.json",
       "params": {}
     }
-  ]
+  ],
+  "profiles": {
+    "note": "splatLite = lighter cut used by the quest2 profile (D02 100k, N04 60k, Ginebra 35k, D05 11k)."
+  }
 }

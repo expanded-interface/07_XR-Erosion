@@ -32,6 +32,31 @@ const DEFAULTS = {
   freq: 3, // 1/metres: drift field frequency
 };
 
+// ---------------------------------------------------------------- device profile
+// Quest 2 has roughly half the GPU of a Quest 3 and 6 GB of shared memory, and
+// splats are fill-rate bound. Its profile loads lighter cuts of each place,
+// renders at a lower resolution with fixed foveation, clamps how big a splat
+// may get on screen, and regenerates fewer splats per frame.
+const UA = navigator.userAgent;
+const PROFILES = {
+  quest2: {
+    name: 'Quest 2', lite: true, fbScale: 0.8, foveation: 1, maxStdDev: 2,
+    maxPixelRadius: 96, minAlpha: 4 / 255, near: 9, farEvery: 12, maxCams: 5, dust: 4000,
+  },
+  quest3: {
+    name: 'Quest 3', lite: false, fbScale: 1.0, foveation: 0.5, maxStdDev: Math.sqrt(5),
+    maxPixelRadius: 256, minAlpha: 2 / 255, near: 16, farEvery: 6, maxCams: 8, dust: 9000,
+  },
+  desktop: {
+    name: 'Desktop', lite: false, fbScale: 1.0, foveation: 0, maxStdDev: Math.sqrt(5),
+    maxPixelRadius: 512, minAlpha: 0.5 / 255, near: 16, farEvery: 6, maxCams: 8, dust: 9000,
+  },
+};
+const profileId =
+  url.get('profile') ||
+  (/Quest 2/.test(UA) ? 'quest2' : /Quest|OculusBrowser/.test(UA) ? 'quest3' : 'desktop');
+const PROFILE = PROFILES[profileId] || PROFILES.desktop;
+
 const G = {
   mode: url.get('mode') === 'ar' ? 'ar' : 'vr',
   loop: Number(url.get('loop') ?? 12), // seconds per drift cycle (exact loop)
@@ -40,7 +65,7 @@ const G = {
   ring: url.has('ring') ? Number(url.get('ring')) : null, // metres, overrides scenes.json
   leave: Number(url.get('leave') ?? 1.2), // seconds: world dissolves before a jump
   arrive: Number(url.get('arrive') ?? 2.6), // seconds: world re-forms after it
-  near: Number(url.get('near') ?? 16), // metres: places closer than this update every frame
+  near: Number(url.get('near') ?? PROFILE.near), // metres: places closer than this update every frame
   eye: 1.6,
 };
 
@@ -94,8 +119,7 @@ function makeTitle() {
 }
 
 /** Faint dust on the floor everywhere: a ground reference in the void. */
-function makeFloorDust(radius) {
-  const n = 9000;
+function makeFloorDust(radius, n = 9000) {
   const pos = new Float32Array(n * 3);
   let s = 12345;
   const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
@@ -118,13 +142,19 @@ class SharedSpace extends xb.Script {
     this.world = new THREE.Group(); // everything placed; locomotion moves this
     this.add(this.world);
 
-    this.spark = new SparkRenderer({ renderer: xb.core.renderer, maxStdDev: Math.sqrt(5) });
+    this.spark = new SparkRenderer({
+      renderer: xb.core.renderer,
+      maxStdDev: PROFILE.maxStdDev,
+      maxPixelRadius: PROFILE.maxPixelRadius, // a leaf against your face is the costliest splat
+      minAlpha: PROFILE.minAlpha, // skip nearly invisible residue
+    });
+    if (PROFILE.foveation) xb.core.renderer.xr.setFoveation(PROFILE.foveation);
     xb.scene.add(this.spark);
 
     if (G.mode === 'vr') {
       xb.scene.background = new THREE.Color(0x060606);
       xb.core.renderer.setClearColor(0x060606, 1);
-      this.world.add(makeFloorDust(RING + 8));
+      this.world.add(makeFloorDust(RING + 8, PROFILE.dust));
     }
 
     this.title = makeTitle();
@@ -157,7 +187,7 @@ class SharedSpace extends xb.Script {
       ...this.places.map((p) => ({ label: p.scene.label, sub: 'capture viewpoint', pos: p.view, fwd: p.viewFwd, place: p })),
     ];
     const total = this.places.reduce((s, p) => s + (p.mesh.numSplats ?? 0), 0);
-    setStatus(`${this.places.length} places · ${(total / 1000).toFixed(0)}k splats · ring ${RING} m`);
+    setStatus(`${PROFILE.name} profile · ${this.places.length} places · ${(total / 1000).toFixed(0)}k splats`);
     this.updatePanel('Plaza');
     this.showTitle('Plaza', `${this.places.length} places around you`);
     this.phase = 'arriving';
@@ -170,7 +200,8 @@ class SharedSpace extends xb.Script {
     const u = createViewconeUniforms(cfg);
     u.debug.value = G.debug ? 1 : 0;
     u.force.value = 1;
-    const mesh = new SplatMesh({ url: scene.splat, worldModifier: createViewconeModifier(u) });
+    const splatUrl = PROFILE.lite && scene.splatLite ? scene.splatLite : scene.splat;
+    const mesh = new SplatMesh({ url: splatUrl, worldModifier: createViewconeModifier(u) });
     const [cams] = await Promise.all([scene.cams ? camerasFromUrl(scene.cams).catch(() => []) : [], mesh.initialized]);
 
     // base orientation of the capture frame
@@ -280,8 +311,13 @@ class SharedSpace extends xb.Script {
       const centreW = p.center.clone().applyMatrix4(this.world.matrixWorld);
       const d = Math.hypot(centreW.x - this._head.x, centreW.z - this._head.z);
       p.dist = d;
-      // near places every frame; far ones every 6th frame, staggered
-      if (inTransition || d < G.near || (this.frame + p.order) % 6 === 0) {
+      // near places every frame; far ones every Nth frame, staggered.
+      // During a stop transition everything moves, but every other frame is
+      // enough for a dissolve.
+      const due = inTransition
+        ? (this.frame + p.order) % 2 === 0
+        : d < G.near || (this.frame + p.order) % PROFILE.farEvery === 0;
+      if (due) {
         this.updateCameras(p);
         p.mesh.updateVersion();
       }
@@ -318,7 +354,7 @@ class SharedSpace extends xb.Script {
       w.d2 = w.p.distanceToSquared(this._head);
     }
     const order = p.camW.slice().sort((a, b) => a.d2 - b.d2);
-    const k = Math.min(MAX_CAMS, order.length);
+    const k = Math.min(MAX_CAMS, PROFILE.maxCams, order.length);
     for (let j = 0; j < k; j++) {
       p.u.pos[j].value.copy(order[j].p);
       p.u.fwd[j].value.copy(order[j].f);
@@ -441,6 +477,7 @@ class SharedSpace extends xb.Script {
 const app = new SharedSpace();
 const options = new xb.Options();
 options.antialias = false; // Quest Browser: MSAA + Spark readbacks can hang
+options.setFramebufferScaleFactor(PROFILE.fbScale);
 if (G.mode === 'vr') {
   options.enableVR();
   options.simulator.environments = [{ manifestPath: './sim/void.json' }];
